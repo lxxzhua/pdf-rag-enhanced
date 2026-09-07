@@ -8,12 +8,66 @@
 """
 
 import logging
-from config import HYBRID_ALPHA, RETRIEVAL_TOP_K, RERANK_TOP_K, MAX_RETRIEVAL_ITERATIONS
+from config import HYBRID_ALPHA, RETRIEVAL_TOP_K, RERANK_TOP_K, MAX_RETRIEVAL_ITERATIONS, MAX_CONTEXT_CHARS
 from core.vector_store import vector_store
 from core.bm25_index import bm25_manager
 from core.embeddings import encode_query
 from core.reranker import rerank_results
 from features.web_search import check_serpapi_key, search_web
+
+
+def expand_to_parents(reranked, max_chars=MAX_CONTEXT_CHARS):
+    """
+    将检索命中的子块回溯为父块，按父块去重并控制上下文总字符数
+
+    父子分块策略：检索在子块上进行（粒度细、命中准），但喂给 LLM 的是父块（上下文完整）。
+
+    Args:
+        reranked: [(child_doc_id, {'content': child_text, 'metadata': {...}, 'score': ...})]
+        max_chars: 上下文总字符上限
+
+    Returns:
+        (parent_contexts, parent_doc_ids, parent_metadatas)
+    """
+    parent_contexts = []
+    parent_doc_ids = []
+    parent_metadatas = []
+    seen_parents = set()
+    total_chars = 0
+
+    for child_id, data in reranked:
+        metadata = data.get('metadata', {})
+        parent_id = metadata.get('parent_id')
+
+        # 尝试回溯父块；若无 parent_id（旧索引兼容），则直接用子块文本
+        if parent_id and parent_id in vector_store.parents_map:
+            parent_text = vector_store.parents_map[parent_id]
+            context_id = parent_id
+        else:
+            parent_text = data['content']
+            context_id = child_id
+
+        if context_id in seen_parents:
+            continue
+        seen_parents.add(context_id)
+
+        # 控制总字符数，超过上限则停止追加
+        if total_chars + len(parent_text) > max_chars:
+            # 若第一条就超长，截断后放入；否则跳过剩余
+            if not parent_contexts:
+                parent_text = parent_text[:max_chars]
+            else:
+                break
+
+        parent_contexts.append(parent_text)
+        parent_doc_ids.append(context_id)
+        # metadata 中保留 parent_id 便于引用溯源
+        merged_meta = dict(metadata)
+        merged_meta['parent_id'] = parent_id or context_id
+        parent_metadatas.append(merged_meta)
+        total_chars += len(parent_text)
+
+    return parent_contexts, parent_doc_ids, parent_metadatas
 
 
 def hybrid_merge(semantic_results, bm25_results, alpha=None):
@@ -145,14 +199,15 @@ def recursive_retrieval(initial_query, max_iterations=None, enable_web_search=Fa
         else:
             reranked = []
 
-        # 整合结果
+        # 整合结果：子块检索命中后回溯父块，按父块去重并控制上下文长度
+        parent_ctx, parent_ids, parent_metas = expand_to_parents(reranked)
         current_contexts = web_texts[:]
-        for doc_id, data in reranked:
-            if doc_id not in all_doc_ids:
-                all_doc_ids.append(doc_id)
-                all_contexts.append(data['content'])
-                all_metadata.append(data['metadata'])
-            current_contexts.append(data['content'])
+        for pid, pctx, pmeta in zip(parent_ids, parent_ctx, parent_metas):
+            if pid not in all_doc_ids:
+                all_doc_ids.append(pid)
+                all_contexts.append(pctx)
+                all_metadata.append(pmeta)
+            current_contexts.append(pctx)
 
         if i == max_iterations - 1:
             break

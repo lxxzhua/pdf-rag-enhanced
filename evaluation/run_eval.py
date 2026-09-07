@@ -25,7 +25,7 @@ from core.document_loader import extract_text
 from core.embeddings import encode_query, encode_texts
 from core.generator import query_answer  # noqa: F401  导入以保持与生产一致的初始化路径
 from core.retriever import hybrid_merge, rerank_results
-from core.text_splitter import split_text
+from core.text_splitter import split_parent_child
 from core.vector_store import vector_store
 from evaluation.retrieval_metrics import evaluate_retrieval, format_report, load_dataset
 
@@ -42,24 +42,30 @@ def build_index_from_docs(doc_paths):
     bm25_manager.clear()
 
     all_chunks, all_metadatas, all_ids = [], [], []
+    all_parents = {}
     for idx, path in enumerate(doc_paths, 1):
         text = extract_text(path)
         if not text:
             raise ValueError(f"文档内容为空或无法提取: {path}")
-        chunks = split_text(text)
         doc_id = f"doc_{int(time.time())}_{idx}"
+        chunks, child_metas, parents_map = split_parent_child(text, doc_id=doc_id)
+        for meta in child_metas:
+            meta["source"] = os.path.basename(path)
+            meta["doc_id"] = doc_id
+        chunk_ids = [f"{doc_id}_chunk_{i}" for i in range(len(chunks))]
         all_chunks.extend(chunks)
-        all_metadatas.extend({"source": os.path.basename(path), "doc_id": doc_id} for _ in chunks)
-        all_ids.extend(f"{doc_id}_chunk_{i}" for i in range(len(chunks)))
-        logger.info("已处理 %s: %d 个文本块", path, len(chunks))
+        all_metadatas.extend(child_metas)
+        all_ids.extend(chunk_ids)
+        all_parents.update(parents_map)
+        logger.info("已处理 %s: %d 个子块 / %d 个父块", path, len(chunks), len(parents_map))
 
     if not all_chunks:
         raise ValueError("没有生成任何文本块")
 
     embeddings = encode_texts(all_chunks, show_progress=True)
-    vector_store.build_index(all_chunks, all_ids, all_metadatas, embeddings)
+    vector_store.build_index(all_chunks, all_ids, all_metadatas, embeddings, parents_map=all_parents)
     bm25_manager.build_index(all_chunks, all_ids)
-    logger.info("索引构建完成: %d 个文本块", len(all_chunks))
+    logger.info("索引构建完成: %d 个子块, %d 个父块", len(all_chunks), len(all_parents))
     return all_chunks
 
 

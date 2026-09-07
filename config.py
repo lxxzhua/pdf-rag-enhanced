@@ -88,11 +88,14 @@ def choose_default_model(siliconflow_key, magick_key, ollama_available=False):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 第四步：RAG 超参数
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CHUNK_SIZE = 400          # 文本分块大小（字符数）
-CHUNK_OVERLAP = 40        # 相邻分块的重叠字符数
+CHUNK_SIZE = 400          # 子块大小（字符数）—— 用于检索的小块
+CHUNK_OVERLAP = 40        # 子块重叠字符数
+PARENT_CHUNK_SIZE = 1500  # 父块大小（字符数）—— 喂给 LLM 的大块，保留完整上下文
+PARENT_CHUNK_OVERLAP = 100  # 父块重叠字符数
 HYBRID_ALPHA = 0.7        # 混合检索中语义检索的权重（0-1）
 RETRIEVAL_TOP_K = 10      # 检索返回的候选文档数量
 RERANK_TOP_K = 5          # 重排序后保留的文档数量
+MAX_CONTEXT_CHARS = 5000  # 喂给 LLM 的上下文总字符上限（避免上下文爆炸）
 MAX_RETRIEVAL_ITERATIONS = 3  # 递归检索的最大迭代轮数
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

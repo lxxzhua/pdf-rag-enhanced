@@ -92,19 +92,21 @@ class VectorStore:
 
     def __init__(self):
         self.index = None           # AutoFaissIndex 实例
-        self.contents_map = {}      # chunk_id -> 文本内容
-        self.metadatas_map = {}     # chunk_id -> 元数据
+        self.contents_map = {}      # chunk_id -> 子块文本内容
+        self.metadatas_map = {}     # chunk_id -> 元数据（含 parent_id）
         self.id_order = []          # 按顺序记录的 chunk_id 列表
+        self.parents_map = {}       # parent_id -> 父块文本内容
 
-    def build_index(self, chunks, chunk_ids, metadatas, embeddings):
+    def build_index(self, chunks, chunk_ids, metadatas, embeddings, parents_map=None):
         """
         构建 FAISS 索引
 
         Args:
-            chunks: 文本片段列表
-            chunk_ids: 片段 ID 列表
-            metadatas: 元数据列表
+            chunks: 子块文本片段列表
+            chunk_ids: 子块 ID 列表
+            metadatas: 元数据列表（每项含 parent_id）
             embeddings: 向量数组 (numpy, float32)
+            parents_map: {parent_id: parent_text} 父块文本映射，用于检索回溯
         """
         dimension = embeddings.shape[1]
         num_vectors = len(chunks)
@@ -117,9 +119,16 @@ class VectorStore:
             self.metadatas_map[chunk_id] = meta
             self.id_order.append(chunk_id)
 
+        if parents_map:
+            self.parents_map.update(parents_map)
+
         auto_index.add(embeddings)
         self.index = auto_index
         logging.info(f"FAISS 索引构建完成，共 {self.index.ntotal} 个文本块，类型: {auto_index.index_type}")
+
+    def get_parent(self, parent_id):
+        """根据 parent_id 获取父块文本，用于检索命中子块后回溯上下文"""
+        return self.parents_map.get(parent_id)
 
     def search(self, query_embedding, k=10):
         """
@@ -158,6 +167,7 @@ class VectorStore:
         self.contents_map.clear()
         self.metadatas_map.clear()
         self.id_order.clear()
+        self.parents_map.clear()
         logging.info("向量存储已清空")
 
 
