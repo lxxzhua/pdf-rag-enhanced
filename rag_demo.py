@@ -359,9 +359,10 @@ with gr.Blocks(title="本地RAG问答系统") as demo:
             return history, "", api_text
 
         try:
-            answer = query_answer(question, enable_web_search, model_choice_val)
+            answer, sources = query_answer(question, enable_web_search, model_choice_val)
         except Exception as e:
             answer = f"系统错误: {str(e)}"
+            sources = []
             logging.error(f"问答处理异常: {str(e)}")
 
         history.append({"role": "user", "content": question})

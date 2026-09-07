@@ -94,7 +94,7 @@ async def upload_file(file: UploadFile = File(...)):
 
         os.unlink(tmp_path)
         result = result_text[0] if isinstance(result_text, tuple) else result_text
-        chunk_match = re.search(r'(\d+) 个文本块', result)
+        chunk_match = re.search(r'(\d+) 个子块', result)
         chunks = int(chunk_match.group(1)) if chunk_match else 0
 
         return {
@@ -113,14 +113,13 @@ async def ask_question(req: QuestionRequest):
     if not req.question:
         raise HTTPException(400, "问题不能为空")
     try:
-        answer = await asyncio.to_thread(query_answer, req.question, req.enable_web_search, req.model_choice)
-        sources = []
-        url_matches = re.findall(r'\[(网络来源|本地文档):[^\]]+\]\s*(?:\(URL:\s*([^)]+)\))?', answer)
-        for source_type, url in url_matches:
-            sources.append({"type": source_type, "url": url} if url else {"type": source_type})
+        answer, sources = await asyncio.to_thread(
+            query_answer, req.question, req.enable_web_search, req.model_choice
+        )
 
         return {
-            "answer": answer, "sources": sources,
+            "answer": answer,
+            "sources": sources,
             "metadata": {"enable_web_search": req.enable_web_search, "model": req.model_choice}
         }
     except Exception as e:

@@ -108,15 +108,19 @@ def test_recursive_retrieval_returns_web_results_with_source_metadata(monkeypatc
     assert "Local retrieval context." in final_context
     assert sources == [
         {
+            "ref_id": 1,
             "text": web_result["snippet"],
             "type": "web",
+            "doc_id": "web:https://example.test/rag-update",
             "url": web_result["url"],
             "title": web_result["title"],
             "timestamp": web_result["timestamp"],
         },
         {
+            "ref_id": 2,
             "text": "Local retrieval context.",
             "type": "local.pdf",
+            "doc_id": "doc-local",
             "source": "local.pdf",
         },
     ]

@@ -174,7 +174,8 @@ def _build_prompt(question, context, enable_web_search, knowledge_base_exists,
 3. 如果参考内容中没有足够信息，请坦诚告知你无法回答
 4. 回答应该全面、准确、有条理，并使用适当的段落和结构
 5. 请用中文回答
-6. 在回答末尾标注信息来源{time_instruction}{conflict_instruction}
+6. 引用标注：在回答中，每当你使用了某条参考内容的信息时，请在相关句子末尾用方括号标注其编号，例如 [1]、[2]。编号必须与上方参考内容前的 [n] 完全对应，不得编造不存在的编号
+7. 在回答末尾标注信息来源{time_instruction}{conflict_instruction}
 
 请现在开始回答："""
 
@@ -190,44 +191,90 @@ def _build_prompt(question, context, enable_web_search, knowledge_base_exists,
 
 
 def _build_context(all_contexts, all_doc_ids, all_metadata, enable_web_search):
-    """构建上下文和来源信息"""
-    context_parts = []
-    sources_for_conflict = []
+    """
+    构建带编号的上下文和结构化来源信息
 
-    for doc, doc_id, metadata in zip(all_contexts, all_doc_ids, all_metadata):
+    每个上下文片段前加 [n] 编号，prompt 会要求模型在回答中标注 [n] 引用。
+    sources 返回结构化列表，供 API 返回和前端渲染脚注。
+    """
+    context_parts = []
+    sources = []
+
+    for idx, (doc, doc_id, metadata) in enumerate(zip(all_contexts, all_doc_ids, all_metadata), 1):
         source_type = metadata.get('source', '本地文档')
-        source_item = {'text': doc, 'type': source_type}
+        source_item = {'ref_id': idx, 'text': doc, 'type': source_type, 'doc_id': doc_id}
 
         if source_type == 'web':
             url = metadata.get('url', '未知URL')
             title = metadata.get('title', '未知标题')
             timestamp = metadata.get('timestamp')
             timestamp_text = f", 时间: {timestamp}" if timestamp else ""
-            context_parts.append(f"[网络来源: {title}] (URL: {url}{timestamp_text})\n{doc}")
+            context_parts.append(f"[{idx}] [网络来源: {title}] (URL: {url}{timestamp_text})\n{doc}")
             source_item['url'] = url
             source_item['title'] = title
             if timestamp:
                 source_item['timestamp'] = timestamp
         else:
             source = metadata.get('source', '未知来源')
-            context_parts.append(f"[本地文档: {source}]\n{doc}")
+            context_parts.append(f"[{idx}] [本地文档: {source}]\n{doc}")
             source_item['source'] = source
 
-        sources_for_conflict.append(source_item)
+        sources.append(source_item)
 
-    return "\n\n".join(context_parts), sources_for_conflict
+    return "\n\n".join(context_parts), sources
+
+
+def validate_citations(answer, num_sources):
+    """
+    校验回答中的引用编号，防止模型编造不存在的 [n] 引用
+
+    从回答中提取所有 [n] 引用，过滤掉 n > num_sources 的假引用。
+    对假引用采取保守策略：直接删除该 [n] 标记，保留回答文本。
+
+    Args:
+        answer: 模型生成的回答文本
+        num_sources: 实际检索到的来源数量（合法编号范围 1..num_sources）
+
+    Returns:
+        (cleaned_answer, valid_citations)
+        - cleaned_answer: 移除假引用后的回答
+        - valid_citations: 实际使用的有效引用编号集合
+    """
+    import re
+    if num_sources <= 0:
+        return answer, set()
+
+    # 匹配 [n] 形式的引用，n 为正整数
+    pattern = re.compile(r'\[(\d+)\]')
+    valid_citations = set()
+
+    def replacer(match):
+        n = int(match.group(1))
+        if 1 <= n <= num_sources:
+            valid_citations.add(n)
+            return match.group(0)
+        # 假引用：删除标记
+        return ''
+
+    cleaned = pattern.sub(replacer, answer)
+    return cleaned, valid_citations
 
 
 def query_answer(question, enable_web_search=False, model_choice="siliconflow", progress=None):
     """
     问答处理主流程（非流式）
 
-    完整流程：递归检索 → 构建上下文 → 矛盾检测 → 构建Prompt → LLM生成
+    完整流程：递归检索 → 构建上下文 → 矛盾检测 → 构建Prompt → LLM生成 → 引用校验
+
+    Returns:
+        (answer, sources) 元组
+        - answer: 校验引用后的回答文本
+        - sources: 结构化来源列表，每项含 ref_id/source/doc_id/text 等
     """
     try:
         knowledge_base_exists = vector_store.is_ready
         if not knowledge_base_exists and not enable_web_search:
-            return "⚠️ 知识库为空，请先上传文档。"
+            return "⚠️ 知识库为空，请先上传文档。", []
 
         if progress:
             progress(0.3, desc="执行递归检索...")
@@ -257,18 +304,28 @@ def query_answer(question, enable_web_search=False, model_choice="siliconflow", 
             response.raise_for_status()
             result = str(response.json().get("response", "未获取到有效回答"))
         else:
-            return f"错误：未知模型选择 {model_choice}"
+            return f"错误：未知模型选择 {model_choice}", []
 
-        return process_thinking_content(result)
+        answer = process_thinking_content(result)
+        # 引用校验：过滤模型编造的不存在的 [n] 引用
+        answer, valid_citations = validate_citations(answer, len(sources))
+        # 只保留被实际引用的来源，方便前端渲染
+        cited_sources = [s for s in sources if s['ref_id'] in valid_citations]
+        return answer, cited_sources
 
     except json.JSONDecodeError:
-        return "响应解析失败，请重试"
+        return "响应解析失败，请重试", []
     except Exception as e:
-        return f"系统错误: {str(e)}"
+        return f"系统错误: {str(e)}", []
 
 
 def stream_answer(question, enable_web_search=False, model_choice="siliconflow", progress=None):
-    """问答处理主流程（流式，用于 Gradio generator 模式）"""
+    """
+    问答处理主流程（流式，用于 Gradio generator 模式）
+
+    Yields:
+        (answer, status) 元组，最终回答已做引用校验
+    """
     try:
         knowledge_base_exists = vector_store.is_ready
         if not knowledge_base_exists and not enable_web_search:
@@ -291,7 +348,8 @@ def stream_answer(question, enable_web_search=False, model_choice="siliconflow",
 
         if model_choice in ("siliconflow", "magick"):
             full_answer = call_cloud_api(prompt, model_choice, temperature=0.7, max_tokens=1536)
-            yield process_thinking_content(full_answer), "完成!"
+            full_answer, _ = validate_citations(process_thinking_content(full_answer), len(sources))
+            yield full_answer, "完成!"
         elif model_choice == "ollama":
             response = get_session().post(
                 "http://localhost:11434/api/generate",
@@ -308,7 +366,8 @@ def stream_answer(question, enable_web_search=False, model_choice="siliconflow",
                     else:
                         yield full_answer, "生成回答中..."
 
-            yield process_thinking_content(full_answer), "完成!"
+            full_answer, _ = validate_citations(process_thinking_content(full_answer), len(sources))
+            yield full_answer, "完成!"
         else:
             yield f"错误：未知模型选择 {model_choice}", "遇到错误"
 
