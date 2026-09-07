@@ -46,6 +46,7 @@ checkpoints/
 uploads/
 logs/
 output/
+*.log
 
 # ══════════════════════════════════════
 # IDE
