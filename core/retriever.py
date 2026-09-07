@@ -61,10 +61,8 @@ def expand_to_parents(reranked, max_chars=MAX_CONTEXT_CHARS):
 
         parent_contexts.append(parent_text)
         parent_doc_ids.append(context_id)
-        # metadata 中保留 parent_id 便于引用溯源
-        merged_meta = dict(metadata)
-        merged_meta['parent_id'] = parent_id or context_id
-        parent_metadatas.append(merged_meta)
+        # 仅保留原有 metadata，不凭空添加 parent_id（兼容旧索引和无 parent_id 的场景）
+        parent_metadatas.append(dict(metadata))
         total_chars += len(parent_text)
 
     return parent_contexts, parent_doc_ids, parent_metadatas
