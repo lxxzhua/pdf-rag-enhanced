@@ -99,6 +99,7 @@ def main():
     parser.add_argument("--dataset", default=DEFAULT_DATASET, help="评测数据集 JSON 路径")
     parser.add_argument("--ks", nargs="+", type=int, default=[1, 2, 3, 5], help="Hit Rate 的 k 值")
     parser.add_argument("--include-draft", action="store_true", help="包含未校对的草稿条目（仅冒烟测试用）")
+    parser.add_argument("--output", default=None, help="报告输出 JSON 文件名（默认 baseline_report.json）")
     args = parser.parse_args()
 
     qa_items = load_dataset(args.dataset, include_draft=args.include_draft)
@@ -112,7 +113,8 @@ def main():
     results = evaluate_retrieval(qa_items, retrieve_once, ks=tuple(args.ks))
     print(format_report(results, ks=tuple(args.ks)))
 
-    report_path = os.path.join(os.path.dirname(__file__), "baseline_report.json")
+    out_name = args.output or "baseline_report.json"
+    report_path = os.path.join(os.path.dirname(__file__), out_name)
     with open(report_path, "w", encoding="utf-8") as f:
         import json
         json.dump(results, f, ensure_ascii=False, indent=2)

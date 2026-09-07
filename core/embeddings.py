@@ -3,19 +3,15 @@
 
 学习要点：
 - Embedding 将文本转换为固定维度的向量，使语义相似的文本在向量空间中距离更近
-- all-MiniLM-L6-v2 是英文优化模型（384维），中文可换用 text2vec-base-chinese
-- 首次运行时模型会自动下载（约 80MB），需要网络连接
+- BAAI/bge-m3 是中文 RAG 主流选择（1024 维，支持 8192 上下文）
+- 模型名可通过 .env 的 EMBED_MODEL_NAME 配置，默认 BAAI/bge-m3
 """
 
 import logging
 import numpy as np
 from functools import lru_cache
 
-# 模型选择说明：
-# - all-MiniLM-L6-v2: 英文优化，384维，轻量快速（默认）
-# - shibing624/text2vec-base-chinese: 中文优化
-# - BAAI/bge-small-zh-v1.5: 中文优化，性能更好
-EMBED_MODEL_NAME = 'all-MiniLM-L6-v2'
+from config import EMBED_MODEL_NAME
 
 
 @lru_cache(maxsize=1)
@@ -40,7 +36,8 @@ def get_embed_model():
     from sentence_transformers import SentenceTransformer
     logging.info(f"加载向量化模型: {EMBED_MODEL_NAME}")
     model = SentenceTransformer(EMBED_MODEL_NAME)
-    logging.info(f"向量化模型加载完成，输出维度: {model.get_sentence_embedding_dimension()}")
+    dim = model.get_sentence_embedding_dimension()
+    logging.info(f"向量化模型加载完成，输出维度: {dim}")
     return model
 
 

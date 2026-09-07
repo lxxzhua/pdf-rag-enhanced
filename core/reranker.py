@@ -6,13 +6,14 @@
 - Recall 阶段用高效检索（FAISS/BM25）从大量文档中召回候选
 - Rerank 阶段用更精确的模型（交叉编码器/LLM）对候选精排
 - 交叉编码器比双塔模型更精确，但速度更慢（适合对少量候选精排）
+- BAAI/bge-reranker-v2-m3 是 BGE-M3 的官方配套交叉编码器
 """
 
 import logging
 import re
 import threading
 from functools import lru_cache
-from config import OLLAMA_MODEL_NAME, RERANK_METHOD
+from config import OLLAMA_MODEL_NAME, RERANK_METHOD, RERANKER_MODEL_NAME
 
 # 交叉编码器（懒加载 + 线程安全）
 _cross_encoder = None
@@ -27,10 +28,8 @@ def get_cross_encoder():
             if _cross_encoder is None:
                 try:
                     from sentence_transformers import CrossEncoder
-                    _cross_encoder = CrossEncoder(
-                        'sentence-transformers/distiluse-base-multilingual-cased-v2'
-                    )
-                    logging.info("交叉编码器加载成功")
+                    _cross_encoder = CrossEncoder(RERANKER_MODEL_NAME)
+                    logging.info(f"交叉编码器加载成功: {RERANKER_MODEL_NAME}")
                 except Exception as e:
                     logging.error(f"加载交叉编码器失败: {str(e)}")
                     _cross_encoder = None
