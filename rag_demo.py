@@ -28,11 +28,7 @@ from config import (
 )
 
 # 导入核心模块
-from core.document_loader import extract_text
-from core.text_splitter import split_parent_child
-from core.embeddings import encode_texts
-from core.vector_store import vector_store
-from core.bm25_index import bm25_manager
+from core.pipeline import process_files
 from core.generator import query_answer, call_siliconflow_api, call_magick_api
 
 # 导入工具
@@ -46,65 +42,9 @@ print("Gradio version:", gr.__version__)
 # 文档处理
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def process_multiple_files(files, progress=gr.Progress()):
-    """处理多个文件：提取文本 → 分块 → 向量化 → 构建索引"""
-    if not files:
-        return "请选择要上传的文件(支持PDF, Word, Excel, PPT, TXT, Markdown等)", []
-
-    try:
-        progress(0.1, desc="清理历史数据...")
-        vector_store.clear()
-        bm25_manager.clear()
-
-        total_files = len(files)
-        processed_results = []
-        all_chunks, all_metadatas, all_ids = [], [], []
-        all_parents = {}
-
-        for idx, file in enumerate(files, 1):
-            try:
-                file_name = os.path.basename(file.name)
-                progress((idx - 1) / total_files, desc=f"处理文件 {idx}/{total_files}: {file_name}")
-
-                text = extract_text(file.name)
-                if not text:
-                    raise ValueError("文档内容为空或无法提取文本")
-
-                doc_id = f"doc_{int(time.time())}_{idx}"
-                # 父子分块：子块用于检索，父块喂给 LLM
-                chunks, child_metas, parents_map = split_parent_child(text, doc_id=doc_id)
-                for meta in child_metas:
-                    meta["source"] = file_name
-                    meta["doc_id"] = doc_id
-                metadatas = child_metas
-                chunk_ids = [f"{doc_id}_chunk_{i}" for i in range(len(chunks))]
-
-                all_chunks.extend(chunks)
-                all_metadatas.extend(metadatas)
-                all_ids.extend(chunk_ids)
-                all_parents.update(parents_map)
-                processed_results.append(f"✅ {file_name}: 成功处理 {len(chunks)} 个子块（{len(parents_map)} 个父块）")
-
-            except Exception as e:
-                logging.error(f"处理文件 {file_name} 时出错: {str(e)}")
-                processed_results.append(f"❌ {file_name}: 处理失败 - {str(e)}")
-
-        if all_chunks:
-            progress(0.8, desc="生成文本嵌入...")
-            embeddings = encode_texts(all_chunks, show_progress=True)
-
-            progress(0.9, desc="构建FAISS索引...")
-            vector_store.build_index(all_chunks, all_ids, all_metadatas, embeddings, parents_map=all_parents)
-
-        progress(0.95, desc="构建BM25检索索引...")
-        bm25_manager.build_index(all_chunks, all_ids)
-
-        summary = f"\n总计处理 {total_files} 个文件，{len(all_chunks)} 个文本块"
-        processed_results.append(summary)
-        return "\n".join(processed_results), [f"📄 {os.path.basename(f.name)}" for f in files]
-
-    except Exception as e:
-        logging.error(f"处理过程出错: {str(e)}")
-        return f"处理过程出错: {str(e)}", []
+    """处理多个文件：委托给 core.pipeline.process_files（Gradio 适配层）"""
+    file_paths = [f.name for f in files]
+    return process_files(file_paths, progress_callback=progress)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

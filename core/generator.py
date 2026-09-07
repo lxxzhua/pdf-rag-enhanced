@@ -140,6 +140,59 @@ def call_cloud_api(prompt, model_choice="siliconflow", temperature=0.7, max_toke
     raise ValueError(f"未知云端模型服务: {model_choice}")
 
 
+def stream_cloud_api(prompt, model_choice="siliconflow", temperature=0.7, max_tokens=1536):
+    """
+    流式调用云端 OpenAI-compatible 模型服务（SSE）
+
+    Yields:
+        逐段生成的文本内容（str）
+    """
+    if model_choice == "siliconflow":
+        api_key, api_url, model_name = SILICONFLOW_API_KEY, SILICONFLOW_API_URL, SILICONFLOW_MODEL_NAME
+    elif model_choice == "magick":
+        api_key, api_url, model_name = MAGICK_API_KEY, MAGICK_API_URL, MAGICK_MODEL_NAME
+    else:
+        raise ValueError(f"未知云端模型服务: {model_choice}")
+
+    if not api_key:
+        yield f"错误：未配置 {model_choice} API Key。"
+        return
+
+    chat_url = _normalize_chat_completions_url(api_url)
+    payload = {
+        "model": model_name,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": True,
+        "max_tokens": max_tokens,
+        "temperature": temperature
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key.strip()}",
+        "Content-Type": "application/json; charset=utf-8"
+    }
+
+    try:
+        response = get_session().post(chat_url, json=payload, headers=headers, stream=True, timeout=180)
+        response.raise_for_status()
+        for line in response.iter_lines(decode_unicode=True):
+            if not line or not line.startswith("data: "):
+                continue
+            data = line[6:]
+            if data.strip() == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                content = delta.get("content", "")
+                if content:
+                    yield content
+            except (json.JSONDecodeError, IndexError):
+                continue
+    except Exception as e:
+        logging.error(f"流式调用{model_choice} API失败: {str(e)}")
+        yield f"调用{model_choice} API时出错: {str(e)}"
+
+
 def call_llm_simple(prompt, model_choice="siliconflow"):
     """简单的 LLM 调用（用于递归检索中的查询改写判断）"""
     if model_choice in ("siliconflow", "magick"):
@@ -159,10 +212,14 @@ def call_llm_simple(prompt, model_choice="siliconflow"):
 
 
 def _build_prompt(question, context, enable_web_search, knowledge_base_exists,
-                  time_sensitive, conflict_detected):
+                  time_sensitive, conflict_detected, history=""):
     """构建提示词"""
-    prompt_template = """作为一个专业的问答助手，你需要基于以下{context_type}回答用户问题。
+    history_block = ""
+    if history:
+        history_block = f"\n[对话历史]\n{history}\n"
 
+    prompt_template = """作为一个专业的问答助手，你需要基于以下{context_type}回答用户问题。
+{history_block}
 提供的参考内容：
 {context}
 
@@ -182,6 +239,7 @@ def _build_prompt(question, context, enable_web_search, knowledge_base_exists,
     return prompt_template.format(
         context_type="本地文档和网络搜索结果" if enable_web_search and knowledge_base_exists else (
             "网络搜索结果" if enable_web_search else "本地文档"),
+        history_block=history_block,
         context=context if context else (
             "网络搜索结果将用于回答。" if enable_web_search and not knowledge_base_exists else "知识库为空或未找到相关内容。"),
         question=question,
@@ -260,16 +318,17 @@ def validate_citations(answer, num_sources):
     return cleaned, valid_citations
 
 
-def query_answer(question, enable_web_search=False, model_choice="siliconflow", progress=None):
+def query_answer(question, enable_web_search=False, model_choice="siliconflow", progress=None, history=""):
     """
     问答处理主流程（非流式）
 
     完整流程：递归检索 → 构建上下文 → 矛盾检测 → 构建Prompt → LLM生成 → 引用校验
 
+    Args:
+        history: 多轮对话历史文本（由调用方从会话中构建），注入 prompt 提供上下文
+
     Returns:
         (answer, sources) 元组
-        - answer: 校验引用后的回答文本
-        - sources: 结构化来源列表，每项含 ref_id/source/doc_id/text 等
     """
     try:
         knowledge_base_exists = vector_store.is_ready
@@ -288,7 +347,7 @@ def query_answer(question, enable_web_search=False, model_choice="siliconflow", 
         time_sensitive = any(w in question for w in ["最新", "今年", "当前", "最近", "刚刚"])
 
         prompt = _build_prompt(question, context, enable_web_search,
-                               knowledge_base_exists, time_sensitive, conflict_detected)
+                               knowledge_base_exists, time_sensitive, conflict_detected, history=history)
 
         if progress:
             progress(0.8, desc="生成回答...")
@@ -307,9 +366,7 @@ def query_answer(question, enable_web_search=False, model_choice="siliconflow", 
             return f"错误：未知模型选择 {model_choice}", []
 
         answer = process_thinking_content(result)
-        # 引用校验：过滤模型编造的不存在的 [n] 引用
         answer, valid_citations = validate_citations(answer, len(sources))
-        # 只保留被实际引用的来源，方便前端渲染
         cited_sources = [s for s in sources if s['ref_id'] in valid_citations]
         return answer, cited_sources
 
@@ -319,9 +376,12 @@ def query_answer(question, enable_web_search=False, model_choice="siliconflow", 
         return f"系统错误: {str(e)}", []
 
 
-def stream_answer(question, enable_web_search=False, model_choice="siliconflow", progress=None):
+def stream_answer(question, enable_web_search=False, model_choice="siliconflow", progress=None, history=""):
     """
-    问答处理主流程（流式，用于 Gradio generator 模式）
+    问答处理主流程（流式，用于 Gradio generator 模式和 SSE）
+
+    Args:
+        history: 多轮对话历史文本
 
     Yields:
         (answer, status) 元组，最终回答已做引用校验
@@ -344,10 +404,14 @@ def stream_answer(question, enable_web_search=False, model_choice="siliconflow",
         time_sensitive = any(w in question for w in ["最新", "今年", "当前", "最近", "刚刚"])
 
         prompt = _build_prompt(question, context, enable_web_search,
-                               knowledge_base_exists, time_sensitive, conflict_detected)
+                               knowledge_base_exists, time_sensitive, conflict_detected, history=history)
 
         if model_choice in ("siliconflow", "magick"):
-            full_answer = call_cloud_api(prompt, model_choice, temperature=0.7, max_tokens=1536)
+            # 逐段流式生成，实时 yield 给前端
+            full_answer = ""
+            for chunk in stream_cloud_api(prompt, model_choice, temperature=0.7, max_tokens=1536):
+                full_answer += chunk
+                yield full_answer, "生成回答中..."
             full_answer, _ = validate_citations(process_thinking_content(full_answer), len(sources))
             yield full_answer, "完成!"
         elif model_choice == "ollama":

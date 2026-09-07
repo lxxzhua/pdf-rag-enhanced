@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PDF RAG 智能问答</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: #f5f7fa;
+      color: #1f2937;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .app-header {
+      background: linear-gradient(135deg, #4f46e5, #7c3aed);
+      color: white;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .app-header h1 { font-size: 20px; font-weight: 600; }
+    .status-badge {
+      background: rgba(255,255,255,0.2);
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+    }
+    .app-main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+    .sidebar {
+      width: 280px;
+      background: white;
+      border-right: 1px solid #e5e7eb;
+      padding: 16px;
+      overflow-y: auto;
+    }
+    .sidebar h3 { font-size: 14px; color: #6b7280; margin-bottom: 12px; text-transform: uppercase; }
+    .upload-area {
+      border: 2px dashed #d1d5db;
+      border-radius: 8px;
+      padding: 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-bottom: 16px;
+    }
+    .upload-area:hover, .upload-area.dragover {
+      border-color: #4f46e5;
+      background: #eef2ff;
+    }
+    .upload-area input { display: none; }
+    .upload-icon { font-size: 32px; color: #9ca3af; }
+    .upload-text { font-size: 13px; color: #6b7280; margin-top: 8px; }
+    .file-list { margin-bottom: 16px; }
+    .file-item {
+      background: #f3f4f6;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-bottom: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .file-item .chunks { color: #6b7280; font-size: 11px; }
+    .model-select {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    .chat-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: white;
+    }
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+    }
+    .message {
+      margin-bottom: 20px;
+      max-width: 80%;
+    }
+    .message.user {
+      margin-left: auto;
+      text-align: right;
+    }
+    .message-bubble {
+      display: inline-block;
+      padding: 12px 16px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.6;
+      text-align: left;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    .message.user .message-bubble {
+      background: #4f46e5;
+      color: white;
+      border-bottom-right-radius: 4px;
+    }
+    .message.assistant .message-bubble {
+      background: #f3f4f6;
+      color: #1f2937;
+      border-bottom-left-radius: 4px;
+    }
+    .citation {
+      display: inline-block;
+      background: #e0e7ff;
+      color: #4338ca;
+      font-size: 11px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin: 0 2px;
+    }
+    .citation:hover { background: #c7d2fe; }
+    .sources-panel {
+      margin-top: 8px;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 12px;
+    }
+    .source-item {
+      padding: 8px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .source-item:last-child { border-bottom: none; }
+    .source-title {
+      font-weight: 600;
+      color: #4f46e5;
+      margin-bottom: 4px;
+    }
+    .source-text {
+      color: #6b7280;
+      font-size: 12px;
+      line-height: 1.5;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .source-meta { color: #9ca3af; font-size: 11px; margin-top: 4px; }
+    .input-area {
+      border-top: 1px solid #e5e7eb;
+      padding: 16px;
+      display: flex;
+      gap: 8px;
+    }
+    .input-area input {
+      flex: 1;
+      padding: 12px 16px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+    }
+    .input-area input:focus { border-color: #4f46e5; }
+    .btn {
+      padding: 12px 24px;
+      background: #4f46e5;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn:hover { background: #4338ca; }
+    .btn:disabled { background: #9ca3af; cursor: not-allowed; }
+    .typing { color: #9ca3af; font-style: italic; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header class="app-header">
+      <h1>📄 PDF RAG 智能问答</h1>
+      <span class="status-badge">{{ apiStatus }}</span>
+    </header>
+
+    <div class="app-main">
+      <!-- 侧边栏：上传 + 模型选择 -->
+      <aside class="sidebar">
+        <h3>文档上传</h3>
+        <label class="upload-area" :class="{dragover: isDragover}"
+               @dragover.prevent="isDragover = true"
+               @dragleave="isDragover = false"
+               @drop.prevent="handleDrop">
+          <input type="file" ref="fileInput" @change="handleFileSelect" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md" multiple />
+          <div class="upload-icon">📁</div>
+          <div class="upload-text">点击或拖拽文件上传</div>
+        </label>
+
+        <div class="file-list">
+          <div v-for="file in uploadedFiles" :key="file.filename" class="file-item">
+            <span>{{ file.filename }}</span>
+            <span class="chunks">{{ file.chunks }} 块</span>
+          </div>
+        </div>
+
+        <h3>模型选择</h3>
+        <select class="model-select" v-model="modelChoice">
+          <option value="siliconflow">SiliconFlow</option>
+          <option value="magick">Magick</option>
+          <option value="ollama">Ollama (本地)</option>
+        </select>
+
+        <label style="display:flex;align-items:center;gap:6px;margin-top:12px;font-size:13px;">
+          <input type="checkbox" v-model="enableWebSearch" />
+          启用联网搜索
+        </label>
+      </aside>
+
+      <!-- 聊天区 -->
+      <main class="chat-area">
+        <div class="messages" ref="messagesRef">
+          <div v-if="messages.length === 0" style="text-align:center;color:#9ca3af;padding:40px;">
+            上传文档后开始提问，支持流式输出和引用溯源
+          </div>
+          <div v-for="(msg, idx) in messages" :key="idx" class="message" :class="msg.role">
+            <div class="message-bubble" v-html="renderCitations(msg.content)"></div>
+            <div v-if="msg.sources && msg.sources.length" class="sources-panel">
+              <div class="source-item" v-for="src in msg.sources" :key="src.ref_id">
+                <div class="source-title">[{{ src.ref_id }}] {{ src.title || src.source || '来源' }}</div>
+                <div class="source-text">{{ src.text }}</div>
+                <div class="source-meta">{{ src.url || src.doc_id }}</div>
+              </div>
+            </div>
+          </div>
+          <div v-if="isGenerating" class="message assistant">
+            <div class="message-bubble typing">正在生成回答...</div>
+          </div>
+        </div>
+
+        <div class="input-area">
+          <input type="text" v-model="inputText" @keyup.enter="sendMessage"
+                 placeholder="输入问题，按回车发送..." :disabled="isGenerating" />
+          <button class="btn" @click="sendMessage" :disabled="isGenerating || !inputText.trim()">发送</button>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    const { createApp, ref, nextTick } = Vue;
+
+    createApp({
+      setup() {
+        const API_BASE = 'http://localhost:17995';
+        const messages = ref([]);
+        const inputText = ref('');
+        const isGenerating = ref(false);
+        const uploadedFiles = ref([]);
+        const modelChoice = ref('siliconflow');
+        const enableWebSearch = ref(false);
+        const sessionId = ref(null);
+        const apiStatus = ref('检查中...');
+        const isDragover = ref(false);
+        const fileInput = ref(null);
+        const messagesRef = ref(null);
+
+        // 检查 API 状态
+        async function checkStatus() {
+          try {
+            const res = await fetch(`${API_BASE}/api/status`);
+            const data = await res.json();
+            const ready = data.vector_store_ready ? '已就绪' : '未加载';
+            apiStatus.value = `知识库${ready} | ${data.total_chunks} 块`;
+          } catch { apiStatus.value = 'API 未连接'; }
+        }
+
+        // 文件上传
+        async function uploadFiles(files) {
+          for (const file of files) {
+            const formData = new FormData();
+            formData.append('file', file);
+            try {
+              const res = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: formData });
+              const data = await res.json();
+              if (data.status === 'success' && data.file_info) {
+                uploadedFiles.value.push(data.file_info);
+              }
+            } catch (e) { alert(`上传失败: ${e.message}`); }
+          }
+          checkStatus();
+        }
+
+        function handleFileSelect(e) { uploadFiles(e.target.files); }
+        function handleDrop(e) { isDragover.value = false; uploadFiles(e.dataTransfer.files); }
+
+        // 渲染引用编号为可点击脚注
+        function renderCitations(content) {
+          return content.replace(/\[(\d+)\]/g, '<span class="citation">[$1]</span>');
+        }
+
+        // 发送消息（SSE 流式）
+        async function sendMessage() {
+          const text = inputText.value.trim();
+          if (!text || isGenerating.value) return;
+
+          messages.value.push({ role: 'user', content: text });
+          inputText.value = '';
+          isGenerating.value = true;
+          await nextTick(); scrollToBottom();
+
+          const assistantMsg = { role: 'assistant', content: '', sources: [] };
+          messages.value.push(assistantMsg);
+
+          try {
+            const res = await fetch(`${API_BASE}/api/ask/stream`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                question: text,
+                enable_web_search: enableWebSearch.value,
+                model_choice: modelChoice.value,
+                session_id: sessionId.value
+              })
+            });
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop() || '';
+
+              for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                const data = JSON.parse(line.slice(6));
+                if (data.error) {
+                  assistantMsg.content += `\n\n[错误] ${data.error}`;
+                } else if (data.done) {
+                  sessionId.value = data.session_id;
+                } else if (data.answer !== undefined) {
+                  assistantMsg.content = data.answer;
+                }
+                await nextTick(); scrollToBottom();
+              }
+            }
+          } catch (e) {
+            assistantMsg.content += `\n\n[连接错误] ${e.message}`;
+          } finally {
+            isGenerating.value = false;
+          }
+        }
+
+        function scrollToBottom() {
+          if (messagesRef.value) messagesRef.value.scrollTop = messagesRef.value.scrollHeight;
+        }
+
+        checkStatus();
+
+        return {
+          messages, inputText, isGenerating, uploadedFiles, modelChoice,
+          enableWebSearch, apiStatus, isDragover, fileInput, messagesRef,
+          handleFileSelect, handleDrop, renderCitations, sendMessage
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
