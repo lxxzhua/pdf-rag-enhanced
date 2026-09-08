@@ -129,10 +129,18 @@ class FileProcessResult(BaseModel):
 async def upload_file(file: UploadFile = File(...)):
     """处理文档并存入向量数据库"""
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp:
+        # 用原始文件名保存，避免 process_files 拿到的是 tmpxxxx.pdf
+        suffix = os.path.splitext(file.filename)[1]
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix="") as tmp:
             content = await file.read()
             tmp.write(content)
             tmp_path = tmp.name
+
+        # 重命名为原始文件名，使 metadata.source 正确显示
+        original_dir = os.path.dirname(tmp_path)
+        target_path = os.path.join(original_dir, file.filename)
+        os.rename(tmp_path, target_path)
+        tmp_path = target_path
 
         result_text = await asyncio.to_thread(process_files, [tmp_path])
 

@@ -45,6 +45,10 @@
     }
     .sidebar h3 { font-size: 14px; color: #6b7280; margin-bottom: 12px; text-transform: uppercase; }
     .upload-area {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
       border: 2px dashed #d1d5db;
       border-radius: 8px;
       padding: 24px;
@@ -52,12 +56,13 @@
       cursor: pointer;
       transition: all 0.2s;
       margin-bottom: 16px;
+      position: relative;
     }
     .upload-area:hover, .upload-area.dragover {
       border-color: #4f46e5;
       background: #eef2ff;
     }
-    .upload-area input { display: none; }
+    .upload-area input { position: absolute; opacity: 0; width: 0; height: 0; }
     .upload-icon { font-size: 32px; color: #9ca3af; }
     .upload-text { font-size: 13px; color: #6b7280; margin-top: 8px; }
     .file-list { margin-bottom: 16px; }
@@ -229,13 +234,13 @@
 
       <!-- 聊天区 -->
       <main class="chat-area">
-        <div class="messages" ref="messagesRef">
+        <div class="messages" ref="messagesRef" @click="handleCitationClick">
           <div v-if="messages.length === 0" style="text-align:center;color:#9ca3af;padding:40px;">
             上传文档后开始提问，支持流式输出和引用溯源
           </div>
-          <div v-for="(msg, idx) in messages" :key="idx" class="message" :class="msg.role">
+          <div v-for="(msg, idx) in messages" :key="idx" class="message" :class="msg.role" :id="'msg-' + idx">
             <div class="message-bubble" v-html="renderCitations(msg.content)"></div>
-            <div v-if="msg.sources && msg.sources.length" class="sources-panel">
+            <div v-if="msg.sources && msg.sources.length" class="sources-panel" :id="'sources-' + idx">
               <div class="source-item" v-for="src in msg.sources" :key="src.ref_id">
                 <div class="source-title">[{{ src.ref_id }}] {{ src.title || src.source || '来源' }}</div>
                 <div class="source-text">{{ src.text }}</div>
@@ -306,7 +311,25 @@
 
         // 渲染引用编号为可点击脚注
         function renderCitations(content) {
-          return content.replace(/\[(\d+)\]/g, '<span class="citation">[$1]</span>');
+          return content.replace(/\[(\d+)\]/g, '<span class="citation" data-ref="$1">[$1]</span>');
+        }
+
+        // 点击 [n] 引用 → 滚动到对应 sources 面板并高亮
+        function handleCitationClick(e) {
+          const el = e.target.closest('.citation');
+          if (!el) return;
+          const refId = el.dataset.ref;
+          // 找到最近的包含 sources 的消息
+          const msgEl = el.closest('.message');
+          if (!msgEl) return;
+          const msgIdx = msgEl.id.replace('msg-', '');
+          const sourcesPanel = document.getElementById('sources-' + msgIdx);
+          if (sourcesPanel) {
+            sourcesPanel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            sourcesPanel.style.transition = 'background 0.3s';
+            sourcesPanel.style.background = '#eef2ff';
+            setTimeout(() => { sourcesPanel.style.background = ''; }, 1500);
+          }
         }
 
         // 发送消息（SSE 流式）
@@ -374,7 +397,7 @@
         return {
           messages, inputText, isGenerating, uploadedFiles, modelChoice,
           enableWebSearch, apiStatus, isDragover, fileInput, messagesRef,
-          handleFileSelect, handleDrop, renderCitations, sendMessage
+          handleFileSelect, handleDrop, renderCitations, handleCitationClick, sendMessage
         };
       }
     }).mount('#app');
