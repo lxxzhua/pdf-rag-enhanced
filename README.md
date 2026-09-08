@@ -104,7 +104,7 @@ flowchart TD
     F --> H
     H --> I[重排序<br/>bge-reranker-v2-m3]
     I --> J[父块回溯 + 去重<br/>上下文上限控制]
-    J --> K[引用编号注入 [1]..[N]<br/>generator]
+    J --> K["引用编号注入 [1]..[N]<br/>generator"]
     K --> L[LLM 生成<br/>SiliconFlow / Ollama / OpenAI 兼容]
     L --> M[引用后校验<br/>删除假引用]
     M --> N[SSE 流式返回<br/>api_router]
