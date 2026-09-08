@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from config import MAGICK_API_KEY, SILICONFLOW_API_KEY, is_configured_api_key
 from core.generator import query_answer, stream_answer
 from core.pipeline import process_files
+from core.embeddings import get_embed_model
 from core.vector_store import vector_store
 from features.web_search import check_serpapi_key
 from utils.network import is_port_available
@@ -81,6 +82,15 @@ def build_history_context(session_id: str, max_turns: int = 5) -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("API 服务启动")
+    # 启动时预加载 embedding 模型（BGE-M3 FP16 ~1.1GB）
+    # 避免首次上传文档时才加载导致 30s+ 等待
+    import asyncio, time
+    t0 = time.time()
+    try:
+        await asyncio.to_thread(get_embed_model)
+        logger.info(f"Embedding 模型预加载完成，耗时 {time.time() - t0:.1f}s")
+    except Exception as e:
+        logger.warning(f"Embedding 模型预加载失败（不影响启动，首次上传会重试）: {e}")
     yield
     logger.info("API 服务已关闭")
 
