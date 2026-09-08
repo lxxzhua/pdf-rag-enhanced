@@ -389,7 +389,7 @@ def stream_answer(question, enable_web_search=False, model_choice="siliconflow",
     try:
         knowledge_base_exists = vector_store.is_ready
         if not knowledge_base_exists and not enable_web_search:
-            yield "⚠️ 知识库为空，请先上传文档。", "遇到错误"
+            yield "⚠️ 知识库为空，请先上传文档。", "遇到错误", []
             return
 
         if progress:
@@ -411,9 +411,10 @@ def stream_answer(question, enable_web_search=False, model_choice="siliconflow",
             full_answer = ""
             for chunk in stream_cloud_api(prompt, model_choice, temperature=0.7, max_tokens=1536):
                 full_answer += chunk
-                yield full_answer, "生成回答中..."
-            full_answer, _ = validate_citations(process_thinking_content(full_answer), len(sources))
-            yield full_answer, "完成!"
+                yield full_answer, "生成回答中...", None
+            full_answer, valid_citations = validate_citations(process_thinking_content(full_answer), len(sources))
+            cited_sources = [s for s in sources if s['ref_id'] in valid_citations]
+            yield full_answer, "完成!", cited_sources
         elif model_choice == "ollama":
             response = get_session().post(
                 "http://localhost:11434/api/generate",
@@ -426,14 +427,15 @@ def stream_answer(question, enable_web_search=False, model_choice="siliconflow",
                     chunk = json.loads(line.decode()).get("response", "")
                     full_answer += chunk
                     if "<think>" in full_answer and "</think>" in full_answer:
-                        yield process_thinking_content(full_answer), "生成回答中..."
+                        yield process_thinking_content(full_answer), "生成回答中...", None
                     else:
-                        yield full_answer, "生成回答中..."
+                        yield full_answer, "生成回答中...", None
 
-            full_answer, _ = validate_citations(process_thinking_content(full_answer), len(sources))
-            yield full_answer, "完成!"
+            full_answer, valid_citations = validate_citations(process_thinking_content(full_answer), len(sources))
+            cited_sources = [s for s in sources if s['ref_id'] in valid_citations]
+            yield full_answer, "完成!", cited_sources
         else:
-            yield f"错误：未知模型选择 {model_choice}", "遇到错误"
+            yield f"错误：未知模型选择 {model_choice}", "遇到错误", []
 
     except Exception as e:
-        yield f"系统错误: {str(e)}", "遇到错误"
+        yield f"系统错误: {str(e)}", "遇到错误", []

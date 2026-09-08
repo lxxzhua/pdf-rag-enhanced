@@ -125,38 +125,88 @@ class FileProcessResult(BaseModel):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 接口
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-@app.post("/api/upload", response_model=FileProcessResult)
+@app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
-    """处理文档并存入向量数据库"""
-    try:
-        # 用原始文件名保存，避免 process_files 拿到的是 tmpxxxx.pdf
-        suffix = os.path.splitext(file.filename)[1]
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix="") as tmp:
-            content = await file.read()
-            tmp.write(content)
-            tmp_path = tmp.name
+    """处理文档并存入向量数据库（SSE 流式上传进度）"""
+    from fastapi.responses import StreamingResponse
 
-        # 重命名为原始文件名，使 metadata.source 正确显示
-        original_dir = os.path.dirname(tmp_path)
-        target_path = os.path.join(original_dir, file.filename)
-        os.rename(tmp_path, target_path)
-        tmp_path = target_path
+    # 先把文件读到原始文件名的临时路径（在线程外，避免阻塞）
+    suffix = os.path.splitext(file.filename)[1]
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix="") as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
 
-        result_text = await asyncio.to_thread(process_files, [tmp_path])
+    original_dir = os.path.dirname(tmp_path)
+    target_path = os.path.join(original_dir, file.filename)
+    os.rename(tmp_path, target_path)
+    tmp_path = target_path
 
-        os.unlink(tmp_path)
-        result = result_text[0] if isinstance(result_text, tuple) else result_text
-        chunk_match = re.search(r'(\d+) 个子块', result)
-        chunks = int(chunk_match.group(1)) if chunk_match else 0
+    filename = file.filename
 
-        return {
-            "status": "success" if "成功" in result else "error",
-            "message": result,
-            "file_info": {"filename": file.filename, "chunks": chunks}
-        }
-    except Exception as e:
-        logger.error(f"文件处理失败: {str(e)}")
-        raise HTTPException(500, f"文档处理失败: {str(e)}") from e
+    async def upload_stream():
+        import threading
+        try:
+            loop = asyncio.get_running_loop()
+
+            def progress_cb(ratio, desc=""):
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        queue.put({"ratio": ratio, "desc": desc}), loop
+                    )
+                except Exception:
+                    pass
+
+            queue: asyncio.Queue = asyncio.Queue()
+
+            def run_processing():
+                try:
+                    result = process_files([tmp_path], progress_callback=progress_cb)
+                    asyncio.run_coroutine_threadsafe(
+                        queue.put({"result": result}), loop
+                    )
+                except Exception as exc:
+                    asyncio.run_coroutine_threadsafe(
+                        queue.put({"error": str(exc)}), loop
+                    )
+
+            thread = threading.Thread(target=run_processing, daemon=True)
+            thread.start()
+
+            while True:
+                item = await queue.get()
+                if "error" in item:
+                    raise Exception(item["error"])
+                if "result" in item:
+                    os.unlink(tmp_path)
+                    result_text = item["result"]
+                    result = result_text[0] if isinstance(result_text, tuple) else result_text
+                    chunk_match = re.search(r'(\d+) 个子块', result)
+                    chunks = int(chunk_match.group(1)) if chunk_match else 0
+                    payload = json.dumps({
+                        "done": True,
+                        "status": "success" if "成功" in result else "error",
+                        "message": result,
+                        "filename": filename,
+                        "chunks": chunks
+                    }, ensure_ascii=False)
+                    yield f"data: {payload}\n\n"
+                    break
+                payload = json.dumps({
+                    "progress": item["ratio"],
+                    "desc": item["desc"]
+                }, ensure_ascii=False)
+                yield f"data: {payload}\n\n"
+        except Exception as e:
+            logger.error(f"文件处理失败: {str(e)}")
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+            payload = json.dumps({"done": True, "error": str(e)}, ensure_ascii=False)
+            yield f"data: {payload}\n\n"
+
+    return StreamingResponse(upload_stream(), media_type="text/event-stream")
 
 
 @app.post("/api/ask", response_model=AnswerResponse)
@@ -200,22 +250,26 @@ async def ask_question_stream(req: QuestionRequest):
 
     async def event_generator():
         full_answer = ""
+        final_sources = []
         try:
-            # stream_answer 是生成器，yield (answer_chunk, status)
-            for answer_chunk, status in stream_answer(
+            # stream_answer 现在 yield 三元组: (answer_chunk, status, sources_or_None)
+            for answer_chunk, status, src in stream_answer(
                 req.question, req.enable_web_search, req.model_choice, None, history
             ):
                 full_answer = answer_chunk
-                # SSE 格式: data: <json>\n\n
+                if src is not None:
+                    final_sources = src
                 payload = json.dumps({"answer": answer_chunk, "status": status}, ensure_ascii=False)
                 yield f"data: {payload}\n\n"
 
-            # 记录会话历史
             sessions[session_id].append({"role": "user", "content": req.question})
             sessions[session_id].append({"role": "assistant", "content": full_answer})
 
-            # 发送结束标记和 session_id
-            end_payload = json.dumps({"done": True, "session_id": session_id}, ensure_ascii=False)
+            # 结束事件带 sources，前端据此渲染引用详情
+            end_payload = json.dumps(
+                {"done": True, "session_id": session_id, "sources": final_sources},
+                ensure_ascii=False
+            )
             yield f"data: {end_payload}\n\n"
         except Exception as e:
             logger.error(f"流式问答失败: {str(e)}")

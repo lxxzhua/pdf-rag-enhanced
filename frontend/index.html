@@ -233,6 +233,31 @@
       background: #f9fafb; border: 1px solid #e5e7eb;
       border-radius: 8px; padding: 16px;
     }
+    /* 上传进度条 */
+    .upload-progress {
+      margin-top: 12px;
+      padding: 10px 12px;
+      background: #eef2ff;
+      border-radius: 8px;
+      font-size: 12px;
+    }
+    .upload-progress-bar {
+      height: 6px;
+      background: #c7d2fe;
+      border-radius: 3px;
+      margin-top: 6px;
+      overflow: hidden;
+    }
+    .upload-progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #4f46e5, #7c3aed);
+      border-radius: 3px;
+      transition: width 0.3s;
+    }
+    .upload-progress-text {
+      color: #4338ca;
+      font-weight: 500;
+    }
   </style>
 </head>
 <body>
@@ -256,9 +281,19 @@
           <div class="upload-text">点击或拖拽文件上传</div>
         </div>
 
-        <div class="file-list">
+        <!-- 上传进度条 -->
+        <div v-if="uploading" class="upload-progress">
+          <div class="upload-progress-text">{{ uploadProgressDesc }}</div>
+          <div class="upload-progress-bar">
+            <div class="upload-progress-fill" :style="{ width: (uploadProgress * 100) + '%' }"></div>
+          </div>
+        </div>
+
+        <!-- 已处理文件标题分区 -->
+        <div v-if="uploadedFiles.length" class="file-list">
+          <h3 style="margin-top: 8px;">已处理文件（{{ uploadedFiles.length }}）</h3>
           <div v-for="file in uploadedFiles" :key="file.filename" class="file-item">
-            <span>{{ file.filename }}</span>
+            <span>📄 {{ file.filename }}</span>
             <span class="chunks">{{ file.chunks }} 块</span>
           </div>
         </div>
@@ -343,6 +378,9 @@
         const fileInput = ref(null);
         const messagesRef = ref(null);
         const chunkDetail = ref(null);
+        const uploading = ref(false);
+        const uploadProgress = ref(0);
+        const uploadProgressDesc = ref('');
 
         // 检查 API 状态
         async function checkStatus() {
@@ -354,20 +392,52 @@
           } catch { apiStatus.value = 'API 未连接'; }
         }
 
-        // 文件上传
+        // 文件上传（SSE 流式进度）
         async function uploadFiles(files) {
-          for (const file of files) {
-            const formData = new FormData();
-            formData.append('file', file);
-            try {
-              const res = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: formData });
-              const data = await res.json();
-              if (data.status === 'success' && data.file_info) {
-                uploadedFiles.value.push(data.file_info);
-              }
-            } catch (e) { alert(`上传失败: ${e.message}`); }
+          uploading.value = true;
+          try {
+            for (const file of files) {
+              uploadProgress.value = 0;
+              uploadProgressDesc.value = '准备中...';
+              const formData = new FormData();
+              formData.append('file', file);
+              try {
+                const res = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: formData });
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  buffer += decoder.decode(value, { stream: true });
+                  const lines = buffer.split('\n');
+                  buffer = lines.pop() || '';
+                  for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    const data = JSON.parse(line.slice(6));
+                    if (data.error) {
+                      alert(`上传失败: ${data.error}`);
+                      uploading.value = false;
+                      return;
+                    }
+                    if (data.done) {
+                      if (data.status === 'success') {
+                        // 重置已处理文件分区（每次全量上传覆盖）
+                        uploadedFiles.value = [{ filename: data.filename, chunks: data.chunks }];
+                      }
+                    } else {
+                      uploadProgress.value = data.progress || 0;
+                      uploadProgressDesc.value = data.desc || '处理中...';
+                    }
+                  }
+                }
+              } catch (e) { alert(`上传失败: ${e.message}`); }
+            }
+          } finally {
+            uploading.value = false;
+            uploadProgress.value = 0;
+            checkStatus();
           }
-          checkStatus();
         }
 
         function handleFileSelect(e) { uploadFiles(e.target.files); }
@@ -441,6 +511,9 @@
                   assistantMsg.content += `\n\n[错误] ${data.error}`;
                 } else if (data.done) {
                   sessionId.value = data.session_id;
+                  if (data.sources) {
+                    assistantMsg.sources = data.sources;
+                  }
                 } else if (data.answer !== undefined) {
                   assistantMsg.content = data.answer;
                 }
@@ -463,6 +536,7 @@
         return {
           messages, inputText, isGenerating, uploadedFiles, modelChoice,
           enableWebSearch, apiStatus, isDragover, fileInput, messagesRef, chunkDetail,
+          uploading, uploadProgress, uploadProgressDesc,
           handleFileSelect, handleDrop, renderCitations, handleCitationClick, closeChunkDetail, sendMessage
         };
       }
