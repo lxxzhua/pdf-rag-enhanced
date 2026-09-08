@@ -64,9 +64,14 @@ def encode_query(query):
     """
     将单个查询文本编码为向量
 
+    bge-*-zh-v1.5 系列官方推荐查询侧加指令前缀（文档侧不加），
+    可显著提升短查询的检索效果；bge-m3 不需要。
+
     Returns:
         numpy 数组，形状为 (1, embedding_dim)
     """
     model = get_embed_model()
+    if "zh-v1.5" in EMBED_MODEL_NAME:
+        query = "为这个句子生成表示以用于检索相关文章：" + query
     embedding = model.encode([query])
     return np.array(embedding).astype('float32')

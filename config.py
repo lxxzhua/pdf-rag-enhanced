@@ -51,10 +51,10 @@ MAGICK_MODEL_NAME = os.getenv("MAGICK_MODEL_NAME", "gpt-4o-mini")
 RERANK_METHOD = os.getenv("RERANK_METHOD", "cross_encoder")
 
 # 向量嵌入模型与重排序器模型（.env 可配置）
-# - BAAI/bge-m3: 中文 RAG 主流选择，1024 维，支持 8192 上下文（推荐）
-# - BAAI/bge-small-zh-v1.5: 轻量回退，512 维，约 100MB
-# - sentence-transformers/all-MiniLM-L6-v2: 英文优化，384 维（原基线）
-EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "BAAI/bge-m3")
+# - BAAI/bge-base-zh-v1.5: CPU 性能优先（768 维，~400MB，实测比 bge-m3 快 ~10 倍）
+# - BAAI/bge-m3: 精度优先，1024 维，支持 8192 上下文（CPU 编码约 5.6s/chunk，大文档需 30+ 分钟）
+# - BAAI/bge-small-zh-v1.5: 更轻量，512 维，约 100MB
+EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "BAAI/bge-base-zh-v1.5")
 
 # 重排序器模型（交叉编码器）
 # - BAAI/bge-reranker-v2-m3: 与 BGE-M3 官方配套的交叉编码器（推荐）
