@@ -35,9 +35,12 @@ def get_embed_model():
 
     from sentence_transformers import SentenceTransformer
     logging.info(f"加载向量化模型: {EMBED_MODEL_NAME}")
-    model = SentenceTransformer(EMBED_MODEL_NAME)
+    # 用 FP16 加载模型，内存减半（从 FP32 ~2.2GB 降到 ~1.1GB）
+    # BGE-M3 约 568M 参数，FP16 精度损失对语义检索影响可忽略
+    model = SentenceTransformer(EMBED_MODEL_NAME, model_kwargs={"torch_dtype": "float16"})
+    # 编码时直接输出 FP32 numpy（FAISS 要求 FP32 输入）
     dim = model.get_sentence_embedding_dimension()
-    logging.info(f"向量化模型加载完成，输出维度: {dim}")
+    logging.info(f"向量化模型加载完成，输出维度: {dim}, dtype=float16")
     return model
 
 
