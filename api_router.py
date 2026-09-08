@@ -295,6 +295,14 @@ async def delete_session(session_id: str):
     return {"status": "success", "message": "会话已删除"}
 
 
+@app.get("/api/chunks")
+async def get_chunks():
+    """返回向量库中的所有父子分块数据（供前端可视化）"""
+    if not vector_store.is_ready:
+        raise HTTPException(404, "知识库为空，请先上传文档")
+    return vector_store.get_all_chunks()
+
+
 @app.get("/api/status")
 async def check_status():
     return {

@@ -170,6 +170,42 @@ class VectorStore:
         self.parents_map.clear()
         logging.info("向量存储已清空")
 
+    def get_all_chunks(self):
+        """
+        返回所有子块和父块的结构化数据，供前端可视化
+
+        Returns:
+            {
+              "parents": [{"parent_id": ..., "text": ..., "doc_id": ...}],
+              "children": [{"chunk_id": ..., "text": ..., "parent_id": ..., "source": ..., "doc_id": ...}],
+              "total_parents": N,
+              "total_children": M
+            }
+        """
+        parents = []
+        for pid, text in self.parents_map.items():
+            parents.append({"parent_id": pid, "text": text[:2000], "doc_id": pid.split("_parent_")[0]})
+
+        children = []
+        for cid in self.id_order:
+            text = self.contents_map.get(cid, "")
+            meta = self.metadatas_map.get(cid, {})
+            children.append({
+                "chunk_id": cid,
+                "text": text[:1000],
+                "parent_id": meta.get("parent_id", ""),
+                "source": meta.get("source", ""),
+                "doc_id": meta.get("doc_id", ""),
+                "text_length": len(text),
+            })
+
+        return {
+            "parents": parents,
+            "children": children,
+            "total_parents": len(parents),
+            "total_children": len(children),
+        }
+
 
 # 模块级单例
 vector_store = VectorStore()

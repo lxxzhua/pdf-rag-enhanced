@@ -258,6 +258,45 @@
       color: #4338ca;
       font-weight: 500;
     }
+    /* 分块可视化 */
+    .chunks-summary {
+      display: flex; gap: 8px; margin-bottom: 12px;
+    }
+    .chunks-stat {
+      flex: 1; padding: 10px; border-radius: 8px; text-align: center;
+      background: #eef2ff;
+    }
+    .chunks-stat strong { display: block; font-size: 20px; color: #4f46e5; }
+    .chunks-stat span { font-size: 11px; color: #6b7280; }
+    .parent-block {
+      border: 2px solid #4f46e5; border-radius: 10px; margin-bottom: 16px;
+      overflow: hidden;
+    }
+    .parent-header {
+      background: linear-gradient(135deg, #4f46e5, #7c3aed); color: white;
+      padding: 10px 14px; font-size: 13px; font-weight: 600;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .parent-body { padding: 12px; background: white; }
+    .parent-text {
+      font-size: 12px; color: #374151; line-height: 1.6;
+      background: #f9fafb; border-radius: 6px; padding: 10px;
+      white-space: pre-wrap; word-wrap: break-word;
+      margin-bottom: 10px; max-height: 160px; overflow-y: auto;
+    }
+    .children-label { font-size: 11px; color: #6b7280; margin-bottom: 6px; font-weight: 500; }
+    .child-card {
+      border: 1px dashed #9ca3af; border-radius: 6px; padding: 8px 10px;
+      margin-bottom: 6px; font-size: 11px; background: #fffbeb;
+    }
+    .child-card-title { font-weight: 600; color: #4338ca; margin-bottom: 3px; }
+    .child-card-text { color: #6b7280; line-height: 1.5; max-height: 80px; overflow: hidden; }
+    .btn-link {
+      background: none; border: 1px solid #4f46e5; color: #4f46e5;
+      padding: 8px 14px; border-radius: 6px; font-size: 12px; cursor: pointer;
+      width: 100%; margin-top: 8px;
+    }
+    .btn-link:hover { background: #eef2ff; }
   </style>
 </head>
 <body>
@@ -296,6 +335,7 @@
             <span>📄 {{ file.filename }}</span>
             <span class="chunks">{{ file.chunks }} 块</span>
           </div>
+          <button class="btn-link" @click="openChunksModal">📚 查看父子分块详情</button>
         </div>
 
         <h3>模型选择</h3>
@@ -358,6 +398,38 @@
         </div>
       </div>
     </div>
+
+    <!-- 父子分块可视化弹窗 -->
+    <div v-if="chunksData" class="modal-overlay" @click.self="chunksData = null" style="max-height: 90vh; max-width: 800px;">
+      <div class="modal-content" style="width: 780px; max-width: 90vw; max-height: 85vh;">
+        <div class="modal-header">
+          <h3>📚 父子分块可视化</h3>
+          <button class="modal-close" @click="chunksData = null">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="chunks-summary">
+            <div class="chunks-stat"><strong>{{ chunksData.total_parents }}</strong><span>父块（喂 LLM）</span></div>
+            <div class="chunks-stat"><strong>{{ chunksData.total_children }}</strong><span>子块（用于检索）</span></div>
+          </div>
+
+          <div v-for="parent in chunksData.parents" :key="parent.parent_id" class="parent-block">
+            <div class="parent-header">
+              <span>🗂️ 父块 {{ parent.parent_id }}</span>
+              <span style="font-size:11px;">{{ (parent.text || '').length }} 字符</span>
+            </div>
+            <div class="parent-body">
+              <div class="parent-text">{{ parent.text }}</div>
+              <div class="children-label">子块（用于向量检索）</div>
+              <div v-for="child in chunksData.children.filter(c => c.parent_id === parent.parent_id)" :key="child.chunk_id" class="child-card">
+                <div class="child-card-title">🔹 {{ child.chunk_id }} · {{ child.source }} ({{ child.text_length }}字)</div>
+                <div class="child-card-text">{{ child.text }}</div>
+              </div>
+              <div v-if="chunksData.children.filter(c => c.parent_id === parent.parent_id).length === 0" style="font-size:11px;color:#9ca3af;">（无子块关联）</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -381,6 +453,7 @@
         const uploading = ref(false);
         const uploadProgress = ref(0);
         const uploadProgressDesc = ref('');
+        const chunksData = ref(null);
 
         // 检查 API 状态
         async function checkStatus() {
@@ -468,6 +541,14 @@
           chunkDetail.value = null;
         }
 
+        async function openChunksModal() {
+          try {
+            const res = await fetch(`${API_BASE}/api/chunks`);
+            if (!res.ok) { alert('知识库为空，请先上传文档'); return; }
+            chunksData.value = await res.json();
+          } catch (e) { alert('获取分块数据失败: ' + e.message); }
+        }
+
         // 发送消息（SSE 流式）
         async function sendMessage() {
           const text = inputText.value.trim();
@@ -535,9 +616,9 @@
 
         return {
           messages, inputText, isGenerating, uploadedFiles, modelChoice,
-          enableWebSearch, apiStatus, isDragover, fileInput, messagesRef, chunkDetail,
+          enableWebSearch, apiStatus, isDragover, fileInput, messagesRef, chunkDetail, chunksData,
           uploading, uploadProgress, uploadProgressDesc,
-          handleFileSelect, handleDrop, renderCitations, handleCitationClick, closeChunkDetail, sendMessage
+          handleFileSelect, handleDrop, renderCitations, handleCitationClick, closeChunkDetail, openChunksModal, sendMessage
         };
       }
     }).mount('#app');
