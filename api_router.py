@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import tempfile
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -135,6 +136,11 @@ class FileProcessResult(BaseModel):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 接口
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 上传互斥锁：process_files 会整体清空并重建向量库，
+# 并发上传会导致索引互相污染（id_order 与 contents_map 不一致），必须串行化
+_upload_lock = threading.Lock()
+
+
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
     """处理文档并存入向量数据库（SSE 流式上传进度）"""
@@ -178,7 +184,8 @@ async def upload_file(file: UploadFile = File(...)):
 
             def run_processing():
                 try:
-                    result = process_files([tmp_path], progress_callback=progress_cb)
+                    with _upload_lock:
+                        result = process_files([tmp_path], progress_callback=progress_cb)
                     asyncio.run_coroutine_threadsafe(
                         queue.put({"result": result}), loop
                     )

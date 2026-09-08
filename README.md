@@ -1,188 +1,208 @@
 <div align="center">
 
-# Local PDF Chat RAG
+# PDF RAG Enhanced
 
-A transparent, runnable Python implementation for learning and inspecting RAG
+基于 **Local_Pdf_Chat_RAG** 二次开发的中文增强版检索增强生成（RAG）系统
 
-English | [简体中文](README.zh-CN.md)
+父子女分块 · BGE 语义检索 · 引用溯源 · SSE 流式输出 · 全链路量化评测
 
-[![CI](https://github.com/weiwill88/Local_Pdf_Chat_RAG/actions/workflows/ci.yml/badge.svg)](https://github.com/weiwill88/Local_Pdf_Chat_RAG/actions/workflows/ci.yml)
+[![CI](https://github.com/lxxzhua/pdf-rag-enhanced/actions/workflows/ci.yml/badge.svg)](https://github.com/lxxzhua/pdf-rag-enhanced/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
-[![Release](https://img.shields.io/github/v/release/weiwill88/Local_Pdf_Chat_RAG)](https://github.com/weiwill88/Local_Pdf_Chat_RAG/releases)
-[![Stars](https://img.shields.io/github/stars/weiwill88/Local_Pdf_Chat_RAG?style=social)](https://github.com/weiwill88/Local_Pdf_Chat_RAG/stargazers)
+![Version](https://img.shields.io/badge/version-3.0.0-purple)
 
 </div>
 
-Local PDF Chat RAG is an educational and reference implementation for developers who want to inspect the complete retrieval-augmented generation pipeline. Document loading, chunking, embeddings, FAISS, BM25, hybrid retrieval, reranking, and answer generation are split into readable and replaceable modules. The repository includes both a Gradio UI and a FastAPI interface.
+---
 
-> This repository is intended for learning and experimentation. It is not a production-ready knowledge-base service. Add authentication, tenant isolation, persistence, evaluation, security controls, and deployment governance before using it with real business data.
+## 一、项目背景
 
-![Current Local PDF Chat RAG interface](images/demo-current.png)
+本项目 fork 自开源项目 [Local_Pdf_Chat_RAG](https://github.com/weiwill88/Local_Pdf_Chat_RAG)（一个面向教学场景的透明 RAG 参考实现）。上游项目解决了"能跑通"，但在**中文场景**下存在明显短板：
 
-## Usage and maintenance
+| 上游痛点 | 具体表现 |
+|----------|----------|
+| 嵌入模型英文优化 | `all-MiniLM-L6-v2` 对中文语义支持差，检索命中率极低 |
+| 重排序器实现错误 | 双塔模型 `distiluse-v2` 被当作交叉编码器使用，分类头随机初始化，排序结果近乎随机 |
+| 分块粒度两难 | `chunk_size=400` 小块检索准但上下文碎，大块上下文全但检索不准 |
+| 来源标注脆弱 | 用正则从回答文本里"抠"来源，极易漏抓/错抓 |
+| 无量化评测 | 优化效果只能"感觉"，无法度量 |
+| API 阻塞 + 依赖耦合 | 问答接口阻塞式等待；API 服务被迫加载整个 Gradio |
 
-Repository snapshot as of **2026-08-31**:
+本项目以**「评测先行、逐阶段迭代、同尺对比」**的方法论完成五个阶段的二次开发，每一步都有可复现的量化指标（见[第四节](#四优化前后指标对比)）。
 
-| Signal | Verifiable snapshot |
-| --- | --- |
-| Adoption | [951 stars](https://github.com/weiwill88/Local_Pdf_Chat_RAG/stargazers) and [179 forks](https://github.com/weiwill88/Local_Pdf_Chat_RAG/forks) |
-| Recent GitHub traffic | 105 unique visitors and 78 unique cloners in the latest 14-day window, through 2026-08-30 |
-| Release history | [2 published releases](https://github.com/weiwill88/Local_Pdf_Chat_RAG/releases); current version: [`v2.1.0`](https://github.com/weiwill88/Local_Pdf_Chat_RAG/releases/tag/v2.1.0) |
-| Maintenance activity | [5 commits in the last 90 days](https://github.com/weiwill88/Local_Pdf_Chat_RAG/commits/main/), with the latest `main` update on 2026-08-16 |
-| Continuous integration | [Latest `main` CI run passed](https://github.com/weiwill88/Local_Pdf_Chat_RAG/actions/workflows/ci.yml); source compilation and credential-free tests run on pull requests |
-| Issue and PR handling | [38 issues closed](https://github.com/weiwill88/Local_Pdf_Chat_RAG/issues?q=is%3Aissue+state%3Aclosed) and [0 open](https://github.com/weiwill88/Local_Pdf_Chat_RAG/issues?q=is%3Aissue+state%3Aopen); [9 pull requests merged](https://github.com/weiwill88/Local_Pdf_Chat_RAG/pulls?q=is%3Apr+is%3Amerged) and [1 under review](https://github.com/weiwill88/Local_Pdf_Chat_RAG/pulls?q=is%3Apr+state%3Aopen) |
+## 二、核心创新点
 
-Recent maintenance includes reviewing and merging an [external retrieval fix](https://github.com/weiwill88/Local_Pdf_Chat_RAG/pull/55), publishing bilingual documentation, adding credential-free tests and GitHub Actions CI, adopting the MIT license, and documenting a private security-reporting process.
+1. **父子分块（Parent-Child Chunking）**——小块检索、大块生成的标准范式
+   子块（400 字符）用于向量检索保证精度，命中后回溯父块（1500 字符、按段落边界切分）喂给 LLM 保证上下文完整性，按父块去重并控制总上下文上限（5000 字符）防止爆炸。
 
-Stars, forks, and traffic are dated GitHub snapshots. Traffic and clone counts indicate repository interest, not verified installations or production deployments. See the repository, [Actions](https://github.com/weiwill88/Local_Pdf_Chat_RAG/actions), and [Releases](https://github.com/weiwill88/Local_Pdf_Chat_RAG/releases) for the current state.
+2. **中文语义检索全家桶**——`bge-*-zh` 嵌入 + 官方配套重排序器
+   修复了上游"双塔当交叉编码器"的真 bug，换为 `BAAI/bge-reranker-v2-m3` 官方两件套；模型名全部 `.env` 可配置，CPU 场景可一键切换轻量模型（性能/精度权衡见下文）。
 
-## Why this project
+3. **引用溯源（Citation Traceability）**——防"假引用"的结构化标注
+   检索上下文注入 `[1]..[N]` 编号并要求模型在回答中标注；回答完成后做**引用后校验**，删除指向不存在来源的编号；来源以结构化 `sources`（ref_id / 文档 / 父块全文 / doc_id）随 API 返回，前端点击 `[n]` 弹出完整父块详情。
 
-- **Inspectable pipeline**: core modules follow the order in which a RAG request is processed.
-- **Hybrid retrieval**: combines FAISS dense retrieval with BM25 keyword retrieval.
-- **Optional reranking**: supports a CrossEncoder or model-based relevance scoring.
-- **Multiple model backends**: local Ollama, SiliconFlow, and OpenAI-compatible APIs.
-- **Document support**: PDF, TXT, Markdown, DOCX, XLS/XLSX, and PPTX.
-- **Two interfaces**: a Gradio web application and a FastAPI REST API.
-- **Verifiable maintenance**: automated tests, GitHub Actions CI, contribution guidance, and a security-reporting process.
+4. **全链路量化评测体系**——13 条人工校对 QA + 检索指标脚本
+   自建 `evaluation/` 模块：LLM 生成 QA 草稿 → 人工校对入库 → 脚本计算 Hit Rate@k / MRR，每个开发阶段用同一把尺子度量（`baseline_report.json` / `stage1_report.json` / `stage2_report.json` 全部入库可追溯）。
 
-## RAG pipeline
+5. **生产化 API + 前端**——管线抽取、SSE 流式、会话管理
+   文档处理管线抽到 `core/pipeline.py`，API 与 Gradio 彻底解耦；`/api/ask/stream` SSE 逐 token 输出；`session_id` 多轮对话记忆（TTL 自动清理）；上传接口 SSE 实时进度回调；Vue 3 前端零构建（CDN 单文件）直接渲染流式回答与结构化引用。
+
+6. **CPU 极限性能优化**（纯 CPU 无 GPU 环境实测）
+   FP16 模型加载（内存 −87%）、启动预加载（首次上传 30s+ → 2s）、轻量模型选型（编码提速 4.5 倍）、上传互斥锁防索引污染、`os.replace` 修复 Windows 覆盖语义。
+
+## 三、界面与功能截图
+
+**智能问答 · 流式输出 · 引用溯源**
+
+![聊天主界面](images/screenshot-chat.png)
+
+**父子分块可视化**（父块喂 LLM / 子块用于检索，层级关系一目了然）
+
+![父子分块可视化](images/screenshot-chunks-modal.png)
+
+**引用详情弹窗**（点击回答中的 `[n]`，查看命中父块全文与元信息）
+
+![引用详情弹窗](images/screenshot-citation-modal.png)
+
+## 四、优化前后指标对比
+
+### 检索质量（13 条人工校对 QA，同一评测脚本）
+
+| 指标 | 基线（上游原版） | 阶段1（BGE-M3 + 重排序） | 提升 |
+|------|:---:|:---:|:---:|
+| **Hit Rate@1** | 7.69% | **100%** | **+92.31 pp** |
+| Hit Rate@2 | 23.08% | **100%** | +76.92 pp |
+| Hit Rate@3 | 61.54% | **100%** | +38.46 pp |
+| Hit Rate@5 | 76.92% | **100%** | +23.08 pp |
+| **MRR@5** | 0.3167 | **1.0000** | **+215.7%** |
+
+> 阶段2（父子分块）在子块层检索，检索指标保持 100%；生成质量受益于上下文从 400 字符碎块升级为 1500 字符完整段落。
+
+### 性能与资源（纯 CPU，无独显环境实测）
+
+| 维度 | 优化前 | 优化后 | 手段 |
+|------|--------|--------|------|
+| 服务常驻内存 | 3.6 GB（FP32 加载 BGE-M3） | **472 MB**（−87%） | FP16 加载 |
+| 首次上传耗时 | 30 s+（含模型懒加载） | **~2 s** | 启动时预加载 |
+| 大 PDF（368 块）编码 | ~34 min（BGE-M3 @ CPU） | **~7.5 min** | 切换 `bge-base-zh-v1.5` |
+| 假引用 | 无法防御 | **0** | 引用后校验删除 |
+| 来源提取 | 正则抠文本 | **结构化 sources** | 溯源体系 |
+
+> 精度/性能可配置：默认 `bge-base-zh-v1.5`（CPU 友好）；追求极致精度可在 `.env` 配置 `EMBED_MODEL_NAME=BAAI/bge-m3`（检索评测 100% 分即基于 M3）。
+
+## 五、系统架构
 
 ```mermaid
-flowchart LR
-    A[Documents] --> B[Parsing]
-    B --> C[Chunking]
-    C --> D[Embeddings]
-    D --> E[FAISS]
-    C --> F[BM25]
-    E --> G[Hybrid retrieval]
-    F --> G
-    G --> H[Reranking]
-    H --> I[Context building]
-    I --> J[LLM generation]
-    J --> K[Answer and sources]
+flowchart TD
+    A[文档上传<br/>PDF/Word/Excel/PPT/TXT/MD] --> B[文本提取<br/>document_loader]
+    B --> C[父子分块<br/>text_splitter<br/>子块400字符·父块1500字符]
+    C --> D[嵌入编码<br/>embeddings<br/>bge-base-zh-v1.5 / bge-m3]
+    D --> E[(FAISS<br/>向量索引)]
+    C --> F[(BM25<br/>关键词索引)]
+    G[用户提问] --> H[混合检索<br/>retriever]
+    E --> H
+    F --> H
+    H --> I[重排序<br/>bge-reranker-v2-m3]
+    I --> J[父块回溯 + 去重<br/>上下文上限控制]
+    J --> K[引用编号注入 [1]..[N]<br/>generator]
+    K --> L[LLM 生成<br/>SiliconFlow / Ollama / OpenAI 兼容]
+    L --> M[引用后校验<br/>删除假引用]
+    M --> N[SSE 流式返回<br/>api_router]
+    N --> O[Vue 3 前端<br/>流式渲染 + 引用弹窗 + 分块可视化]
+    P[评测体系 evaluation/<br/>Hit Rate@k · MRR] -.同一把尺子度量.-> H
 ```
 
-## Quick start
+**目录结构**
 
-### 1. Create an environment
+```
+pdf-rag-enhanced/
+├── core/                  # 核心 RAG 管线（可独立替换）
+│   ├── document_loader.py # 文本提取（PDF/Word/Excel/PPT/TXT/MD）
+│   ├── text_splitter.py   # 父子分块 split_parent_child()
+│   ├── embeddings.py      # 嵌入编码（FP16、query 指令适配）
+│   ├── vector_store.py    # FAISS + 父块映射 + 分块可视化
+│   ├── bm25_index.py      # BM25 关键词索引
+│   ├── retriever.py       # 混合检索 + 父块回溯去重
+│   ├── reranker.py        # 交叉编码器重排序
+│   ├── generator.py       # prompt 构建 + 引用校验 + 流式生成
+│   └── pipeline.py        # 文档处理管线（UI/API 共用）
+├── api_router.py          # FastAPI 服务（SSE 上传/问答、会话管理）
+├── rag_demo.py            # Gradio 界面
+├── frontend/              # Vue 3 CDN 单文件前端
+├── evaluation/            # 评测：QA 数据集 + 检索指标 + 报告
+├── tests/                 # pytest 测试
+└── images/                # 截图
+```
+
+## 六、技术栈
+
+| 层 | 技术 |
+|----|------|
+| 语言 | Python 3.10+ |
+| 嵌入/重排序 | SentenceTransformers · `BAAI/bge-base-zh-v1.5`（默认）/ `BAAI/bge-m3` · `BAAI/bge-reranker-v2-m3` |
+| 向量/关键词检索 | FAISS · BM25（rank_bm25 + jieba） |
+| 生成后端 | SiliconFlow / Ollama / OpenAI 兼容 API |
+| Web 服务 | FastAPI + Uvicorn（SSE 流式） |
+| 前端 | Vue 3（CDN 免构建单文件） |
+| 桌面 UI | Gradio 6.x |
+| 文档解析 | pypdfium2 / python-docx / openpyxl / python-pptx |
+| 评测/工程化 | pytest · GitHub Actions CI · JSON 指标报告 |
+
+## 七、部署步骤
 
 ```bash
-git clone https://github.com/weiwill88/Local_Pdf_Chat_RAG.git
-cd Local_Pdf_Chat_RAG
+# 1. 克隆
+git clone https://github.com/lxxzhua/pdf-rag-enhanced.git
+cd pdf-rag-enhanced
 
-python3.10 -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-python -m pip install --upgrade pip
+# 2. 创建虚拟环境（Windows）
+python -m venv PDF-RAG
+.\PDF-RAG\Scripts\Activate.ps1
+
+# 3. 安装依赖
 pip install -r requirements.txt
-```
 
-### 2. Configure one model backend
+# 4. 配置密钥（可选功能按需填写）
+copy example.env .env   # 编辑 .env 填入 SILICONFLOW_API_KEY 等
 
-```bash
-cp example.env .env
-```
-
-Edit `.env` and choose at least one option:
-
-- set `SILICONFLOW_API_KEY`;
-- set `MAGICK_API_KEY`, its endpoint, and model name; or
-- start Ollama locally and pull the model configured in `.env`.
-
-Keep real credentials in your local `.env` file. Values beginning with `Your_` are treated as placeholders and are not valid credentials.
-
-### 3. Start the web UI
-
-```bash
-python rag_demo.py
-```
-
-The application first tries `http://127.0.0.1:17995`, then ports 17996–17999 if needed.
-
-### 4. Start the REST API
-
-```bash
+# 5. 启动 API 服务（含前端，模型启动时预加载约 15~30s）
 python api_router.py
+# 浏览器访问 http://localhost:17995/
 ```
 
-Main endpoints:
+可选：Gradio 桌面 UI（`python rag_demo.py`）、评测复现（`python evaluation/run_eval.py --output evaluation/my_report.json`）、测试（`pytest -q`）。
 
-- `GET /api/status`: runtime and provider configuration status;
-- `POST /api/upload`: upload and process a document;
-- `POST /api/ask`: ask a question against processed documents.
+**`.env` 常用配置**
 
-## Repository layout
-
-```text
-├── config.py                  # Environment, model, and RAG settings
-├── rag_demo.py                # Gradio web UI
-├── api_router.py              # FastAPI interface
-├── core/
-│   ├── document_loader.py     # Document extraction
-│   ├── text_splitter.py       # Text chunking
-│   ├── embeddings.py          # Embeddings
-│   ├── vector_store.py        # FAISS index
-│   ├── bm25_index.py          # BM25 index
-│   ├── retriever.py           # Hybrid and recursive retrieval
-│   ├── reranker.py            # Result reranking
-│   └── generator.py           # Context and answer generation
-├── features/                  # Web search and optional extensions
-├── tests/                     # Tests that require no external credentials
-└── .github/                   # CI, issue forms, and pull request template
+```ini
+SILICONFLOW_API_KEY=sk-xxx        # 云端 LLM
+EMBED_MODEL_NAME=BAAI/bge-base-zh-v1.5   # 换 BAAI/bge-m3 追求最高检索精度
+RERANKER_MODEL_NAME=BAAI/bge-reranker-v2-m3
 ```
 
-## Tests
+## 八、API 一览
 
-```bash
-pip install -r requirements-dev.txt
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest
-```
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/upload` | 文档上传（**SSE 实时进度**） |
+| POST | `/api/ask` | 阻塞式问答 |
+| POST | `/api/ask/stream` | **SSE 流式问答**（逐 token + 结构化 sources） |
+| GET | `/api/chunks` | 父子分块可视化数据 |
+| GET/DELETE | `/api/session/{id}` | 会话历史查询 / 删除 |
+| GET | `/api/status` | 服务与知识库状态 |
 
-The current suite covers:
+## 九、已知限制与后续规划
 
-- configuration and default backend selection;
-- TXT, Markdown, and unsupported-file loading behavior;
-- BM25 and hybrid-result merging;
-- clean, network-free failure when an API key is missing.
+- 纯 CPU 环境下大文档编码仍需分钟级（上 GPU 可提速 50 倍以上）
+- 向量库为内存态，重启后需重新上传（FAISS 持久化在规划中）
+- 生成层评测（RAGAS Faithfulness / Context Precision）待接入
+- 当前检索评测基于单一维修案例文档，评测集将持续扩充
 
-GitHub Actions compiles the Python sources and runs the test suite for every pull request.
+## 十、致谢
 
-## Configuration
-
-See [`example.env`](example.env) for the complete example. Common variables include:
-
-| Variable | Purpose |
-| --- | --- |
-| `SILICONFLOW_API_KEY` | SiliconFlow API credential |
-| `SILICONFLOW_MODEL_NAME` | SiliconFlow model ID |
-| `MAGICK_API_KEY` | OpenAI-compatible provider credential |
-| `MAGICK_API_URL` | Provider base URL or full Chat Completions URL |
-| `MAGICK_MODEL_NAME` | Provider model ID |
-| `OLLAMA_MODEL_NAME` | Local Ollama model name |
-| `SERPAPI_KEY` | Optional web-search credential |
-| `RERANK_METHOD` | `cross_encoder` or `llm` |
-
-## Known limitations
-
-- PDF extraction reads the text layer and does not provide general-purpose OCR.
-- Excel and PowerPoint extraction focuses on text rather than visual layout.
-- The index is currently in process memory and must be rebuilt after restart.
-- Embedding and reranking models may be downloaded on first use.
-- Cloud model and web-search requests send the relevant query to third-party services; review your data boundary first.
-
-## Contributing
-
-Reproducible bug reports, documentation improvements, and focused pull requests are welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) before contributing.
-
-Do not open a public issue for a vulnerability. Follow [`SECURITY.md`](SECURITY.md) instead.
-
-## Releases and maintenance
-
-- Changelog: [`CHANGELOG.md`](CHANGELOG.md)
-- Releases: [GitHub Releases](https://github.com/weiwill88/Local_Pdf_Chat_RAG/releases)
-- Maintainer: [Will Wei](https://github.com/weiwill88)
+- 上游项目：[Local_Pdf_Chat_RAG](https://github.com/weiwill88/Local_Pdf_Chat_RAG)（951+ stars 的 RAG 教学参考实现）
+- 模型：[BAAI](https://huggingface.co/BAAI)（bge 系列）、[SiliconFlow](https://siliconflow.cn/)（推理服务）
 
 ## License
 
-Released under the [MIT License](LICENSE).
+MIT
