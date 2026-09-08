@@ -467,18 +467,22 @@
 
         // 文件上传（SSE 流式进度）
         async function uploadFiles(files) {
+          if (!files || files.length === 0) { alert("请先选择文件"); return; }
           uploading.value = true;
           try {
             for (const file of files) {
               uploadProgress.value = 0;
-              uploadProgressDesc.value = '准备中...';
+              uploadProgressDesc.value = `准备上传 ${file.name}...`;
               const formData = new FormData();
               formData.append('file', file);
               try {
                 const res = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: formData });
+                if (!res.ok) { const errText = await res.text().catch(() => res.statusText); throw new Error(`HTTP ${res.status}: ${errText}`); }
+                if (!res.body) { throw new Error('浏览器不支持流式读取'); }
                 const reader = res.body.getReader();
                 const decoder = new TextDecoder();
                 let buffer = '';
+                let gotDone = false;
                 while (true) {
                   const { done, value } = await reader.read();
                   if (done) break;
@@ -494,9 +498,13 @@
                       return;
                     }
                     if (data.done) {
+                      gotDone = true;
                       if (data.status === 'success') {
-                        // 重置已处理文件分区（每次全量上传覆盖）
-                        uploadedFiles.value = [{ filename: data.filename, chunks: data.chunks }];
+                        uploadedFiles.value.push({ filename: data.filename, chunks: data.chunks });
+                        uploadProgress.value = 1;
+                        uploadProgressDesc.value = '完成!';
+                      } else {
+                        alert(`上传失败: ${data.message}`);
                       }
                     } else {
                       uploadProgress.value = data.progress || 0;
@@ -504,6 +512,7 @@
                     }
                   }
                 }
+                if (!gotDone) { throw new Error('服务端未返回完成标记，可能处理超时'); }
               } catch (e) { alert(`上传失败: ${e.message}`); }
             }
           } finally {
