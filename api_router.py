@@ -246,8 +246,16 @@ async def check_status():
     }
 
 
+# 静态前端挂载：必须放在所有 API 路由之后，/api/* 优先匹配
+_frontend_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
+if os.path.isdir(_frontend_dir):
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=_frontend_dir, html=True), name="frontend")
+    logger.info(f"前端已挂载: {_frontend_dir}")
+
+
 if __name__ == "__main__":
     import uvicorn
     port = next((p for p in [17995, 17996, 17997, 17998, 17999] if is_port_available(p)), 17995)
-    logger.info(f"启动API服务，端口: {port}")
+    logger.info(f"启动API服务，端口: {port}，前端访问: http://localhost:{port}/")
     uvicorn.run(app, host="0.0.0.0", port=port)
