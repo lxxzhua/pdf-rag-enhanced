@@ -149,7 +149,14 @@ async def upload_file(file: UploadFile = File(...)):
 
     original_dir = os.path.dirname(tmp_path)
     target_path = os.path.join(original_dir, file.filename)
-    os.rename(tmp_path, target_path)
+    # os.replace 在 Windows 上会覆盖目标（os.rename 不会，导致 FileExistsError）
+    try:
+        os.replace(tmp_path, target_path)
+    except OSError:
+        # 如果 replace 失败（跨盘等），回退到复制+删除
+        import shutil
+        shutil.copy2(tmp_path, target_path)
+        os.unlink(tmp_path)
     tmp_path = target_path
 
     filename = file.filename
